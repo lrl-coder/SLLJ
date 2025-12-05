@@ -1,172 +1,210 @@
 import os
 import torch
+import numpy as np
+import pandas as pd
 from torch.utils.data import DataLoader
 from transformers import CLIPProcessor, CLIPModel
 import matplotlib
 
-# 如果在服务器无图形界面环境运行，取消下一行的注释
-# matplotlib.use('Agg')
-matplotlib.use('TkAgg')  # Windows 本地运行推荐 TkAgg
+matplotlib.use('Agg')  # 无头模式，防止服务器报错
 
-# 导入自定义模块
-from dataset import LocalFlickrDataset, MiniCOCODataset, DifferentiableNormalize, OPENAI_CLIP_MEAN, OPENAI_CLIP_STD
+from dataset import LocalFlickrDataset
 from attacker import MultimodalAttacker
 from utils import setup_seed, visualize_attack_result
 
 
 # ============================
-# 1. 增强评估函数 (保持不变)
+# 1. 全局评估函数 (R@K 计算)
 # ============================
-def evaluate_attack_performance(model, images, true_texts, target_texts, device, processor, prefix=""):
+def evaluate_global_retrieval(image_embeds, text_embeds, k_list=[1, 3, 5, 10]):
     """
-    更详细的评估：计算 ASR (攻击成功率) 以及 相似度变化指标
+    计算全局检索指标 (R@K, Mean Rank)
+    Args:
+        image_embeds: 所有测试图像的特征 (N, D)
+        text_embeds: 所有候选文本的特征 (N, D)
     """
-    normalizer = DifferentiableNormalize(OPENAI_CLIP_MEAN, OPENAI_CLIP_STD).to(device)
+    # 归一化
+    image_embeds = torch.nn.functional.normalize(image_embeds, p=2, dim=1)
+    text_embeds = torch.nn.functional.normalize(text_embeds, p=2, dim=1)
 
-    with torch.no_grad():
-        # 1. 获取图像特征
-        norm_imgs = normalizer(images)
-        img_embeds = model.get_image_features(pixel_values=norm_imgs)
-        img_embeds = torch.nn.functional.normalize(img_embeds, p=2, dim=1)
+    # 计算相似度矩阵 (N_imgs, N_texts)
+    # 也就是每一张图和库里所有文本算相似度
+    sim_matrix = torch.matmul(image_embeds, text_embeds.t())
 
-        # 2. 获取文本特征 (True Text & Target Text)
-        true_inputs = processor(text=true_texts, return_tensors="pt", padding=True).to(device)
-        target_inputs = processor(text=target_texts, return_tensors="pt", padding=True).to(device)
+    num_samples = sim_matrix.shape[0]
+    metrics = {}
 
-        true_embeds = model.get_text_features(**true_inputs)
-        target_embeds = model.get_text_features(**target_inputs)
+    # 获取每个图像对应的 Ground Truth 文本的排名
+    # 假设测试集中第 i 张图的正确描述就是第 i 个文本
+    sorted_indices = torch.argsort(sim_matrix, dim=1, descending=True)
 
-        true_embeds = torch.nn.functional.normalize(true_embeds, p=2, dim=1)
-        target_embeds = torch.nn.functional.normalize(target_embeds, p=2, dim=1)
+    # 构建 GT 索引: [[0], [1], [2], ...]
+    gt_indices = torch.arange(num_samples, device=sim_matrix.device).view(-1, 1)
 
-        # 3. 计算相似度
-        sim_to_true = (img_embeds * true_embeds).sum(dim=1)  # [Batch]
-        sim_to_target = (img_embeds * target_embeds).sum(dim=1)  # [Batch]
+    # 找到 GT 在排序结果中的位置
+    matches = (sorted_indices == gt_indices)
+    ranks = matches.nonzero()[:, 1]  # 获取 rank (0-based)
 
-        # 4. 计算 ASR
-        success_mask = sim_to_target > sim_to_true
-        asr = success_mask.float().mean().item()
+    # 计算 R@K
+    for k in k_list:
+        recall = (ranks < k).float().mean().item()
+        metrics[f"R@{k}"] = recall * 100
 
-        # 5. 统计平均相似度
-        avg_sim_true = sim_to_true.mean().item()
-        avg_sim_target = sim_to_target.mean().item()
+    # 计算 Mean Rank
+    metrics["Mean Rank"] = (ranks.float() + 1).mean().item()
 
-        print(f"[{prefix}] ASR: {asr * 100:.2f}% | "
-              f"Avg Sim to True: {avg_sim_true:.4f} | "
-              f"Avg Sim to Target: {avg_sim_target:.4f}")
-
-        return asr, avg_sim_true, avg_sim_target
+    return metrics
 
 
 # ============================
 # 2. 主函数
 # ============================
 def main():
-    # A. 基础设置
+    # --- A. 基础配置 ---
     setup_seed(2025)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Running on device: {device}")
 
-    # 攻击超参数配置
-    attack_config = {
-        "epsilon": 8 / 255,  # 最大扰动限制
-        "alpha": 2 / 255,  # 单步步长
-        "steps": 20,  # 迭代次数
-        "decay": 1.0,  # 动量因子
-        "targeted": True  # 是否为定向攻击
+    # 数据集路径 (请根据您的实际环境修改)
+    dataset_config = {
+        "dataset_root": r"../dataset/flickr30k_images",
+        "ann_file": r"../dataset/flickr30k_images/results.csv",
+        "max_samples": 16,  # 论文建议跑 1000 张测试图
+        "batch_size": 16
     }
 
-    # B. 准备数据
-    print("\n--- Initializing Data from Local Disk ---")
+    # --- B. 定义对比实验配置 ---
+    # 这就是您论文核心实验的配置列表
+    configurations = [
+        # 1. FGSM: 单步攻击，步长直接设为 epsilon，无动量
+        {"name": "FGSM", "epsilon": 8 / 255, "alpha": 8 / 255, "steps": 1, "decay": 0.0},
 
-    # === 请修改这里的路径为你自己的真实路径 ===
-    dataset_root = r"../dataset/flickr30k_images"
-    images_dir = os.path.join(dataset_root, "flickr30k_images")
-    ann_file = os.path.join(dataset_root, "results.csv")
+        # 2. PGD: 多步迭代，步长较小，无动量
+        {"name": "PGD", "epsilon": 8 / 255, "alpha": 2 / 255, "steps": 10, "decay": 0.0},
 
-    # 实例化数据集
+        # 3. MI-FGSM: 多步迭代，带 1.0 的动量 (我们的最强攻击)
+        {"name": "MI-FGSM", "epsilon": 8 / 255, "alpha": 2 / 255, "steps": 10, "decay": 1.0}
+    ]
+
+    # --- C. 数据与模型加载 ---
+    images_dir = os.path.join(dataset_config["dataset_root"], "flickr30k_images")
     dataset = LocalFlickrDataset(
         images_dir=images_dir,
-        ann_file=ann_file,
-        max_samples=1000,  # 调试模式只跑1000张
-        delimiter='|'  # Flickr30k 标准分隔符
+        ann_file=dataset_config["ann_file"],
+        max_samples=dataset_config["max_samples"],
+        delimiter='|'
     )
 
-    if len(dataset) > 0:
-        # Batch Size = 2，意味着每次处理2张图
-        dataloader = DataLoader(dataset, batch_size=2, shuffle=False)
-    else:
-        print("Error: 数据集为空，请检查路径是否正确。")
+    if len(dataset) == 0:
+        print("Error: 数据集加载为空，请检查路径。")
         return
 
-    # C. 加载模型
+    dataloader = DataLoader(dataset, batch_size=dataset_config["batch_size"], shuffle=False, num_workers=0)
+
     print("\n--- Loading CLIP Model ---")
     model_id = "openai/clip-vit-base-patch32"
     model = CLIPModel.from_pretrained(model_id)
     processor = CLIPProcessor.from_pretrained(model_id)
-
     attacker = MultimodalAttacker(model, processor, device)
 
-    # D. 实验循环
-    print("\n--- Starting Attack Experiment ---")
-    print(f"Config: {attack_config}")
+    # 结果存储列表
+    final_results = []
 
-    for i, (images, texts) in enumerate(dataloader):
+    # --- D. 首先评估 Clean (无攻击) 性能 ---
+    print("\n[Evaluating Clean Performance...]")
+    clean_img_feats = []
+    text_feats = []
+
+    # 只需要跑一次 Clean 特征提取
+    for images, texts in dataloader:
         images = images.to(device)
-        current_batch_size = len(images)  # 动态获取当前 batch 大小 (防止最后一批不足2张)
-
-        # =======================================================
-        # 核心优化：动态生成 Target Captions
-        # =======================================================
-
-        # 策略 1: 错位攻击 (Permutation Attack) [学术推荐]
-        # 目标是：第1张图去匹配第2张图的文本，第2张去匹配第1张...
-        # 这样能证明模型被彻底混淆了，而且不需要编造文本。
-        target_captions = list(texts[1:]) + [texts[0]]
-
-        # 策略 2: 固定目标攻击 (Fixed Target Attack) [可选]
-        # 如果你想看“把所有东西都变成蜘蛛侠”，取消下面两行的注释
-        # target_concept = "a photo of spiderman"
-        # target_captions = [target_concept] * current_batch_size
-
-        # =======================================================
-
-        print(f"\nBatch {i} Targets Example: '{texts[0]}' -> '{target_captions[0]}'")
-
-        # 预计算目标文本特征 (注意：现在 target_captions 的长度严格等于 current_batch_size)
-        target_emb = attacker.get_text_features(target_captions)
-
-        # --- 1. 攻击前评估 (Baseline) ---
-        # 注意：这里传入的是 batch 专属的 target_captions
-        evaluate_attack_performance(
-            model, images, list(texts), target_captions, device, processor, prefix="Clean"
-        )
-
-        # --- 2. 执行 MI-FGSM 攻击 ---
-        adv_images = attacker.mi_fgsm_attack(
-            images,
-            target_emb,
-            epsilon=attack_config["epsilon"],
-            alpha=attack_config["alpha"],
-            steps=attack_config["steps"],
-            decay=attack_config["decay"],
-            targeted=attack_config["targeted"]
-        )
-
-        # --- 3. 验证扰动约束 ---
         with torch.no_grad():
-            diff = (adv_images - images).abs()
-            max_diff = diff.view(current_batch_size, -1).max(dim=1)[0].mean().item()
-            print(f"[Sanity Check] Max perturbation (L_inf): {max_diff:.4f} (Limit: {attack_config['epsilon']:.4f})")
+            # 提取 Image 特征
+            norm_imgs = attacker.normalizer(images)
+            img_emb = model.get_image_features(pixel_values=norm_imgs)
+            clean_img_feats.append(img_emb.cpu())
 
-        # --- 4. 攻击后评估 ---
-        evaluate_attack_performance(
-            model, adv_images, list(texts), target_captions, device, processor, prefix="Adv"
-        )
+            # 提取 Text 特征
+            txt_emb = attacker.get_text_features(list(texts))
+            text_feats.append(txt_emb.cpu())
 
-        # --- 5. 可视化 ---
-        save_path = f"result_batch_{i}.png"
-        visualize_attack_result(images[0], adv_images[0], save_name=save_path)
+    clean_img_feats = torch.cat(clean_img_feats, dim=0).to(device)
+    text_feats = torch.cat(text_feats, dim=0).to(device)
+
+    clean_metrics = evaluate_global_retrieval(clean_img_feats, text_feats)
+    print(f"Clean Metrics: R@1={clean_metrics['R@1']:.2f}%, MR={clean_metrics['Mean Rank']:.2f}")
+
+    # 把 Clean 结果也加入表格
+    final_results.append({
+        "Method": "Clean (No Attack)",
+        "R@1": clean_metrics['R@1'],
+        "R@3": clean_metrics['R@3'],
+        "R@5": clean_metrics['R@5'],
+        "R@10": clean_metrics['R@10'],
+        "Mean Rank": clean_metrics['Mean Rank']
+    })
+
+    # --- E. 循环运行三种攻击 ---
+    print("\n--- Starting Comparative Experiment ---")
+
+    for config in configurations:
+        print(f"\n>>> Running Attack: {config['name']} ...")
+
+        adv_img_feats = []
+
+        # 遍历数据集生成对抗样本
+        for i, (images, texts) in enumerate(dataloader):
+            images = images.to(device)
+
+            # 获取目标特征：这里我们做 Untargeted Attack (无定向攻击)
+            # 目标是让图像远离它原本的 Ground Truth 文本
+            # 所以 target_text_embeds 就是它原本的文本特征
+            with torch.no_grad():
+                current_text_feats = attacker.get_text_features(list(texts))
+
+            # 生成对抗样本
+            adv_images = attacker.mi_fgsm_attack(
+                images,
+                current_text_feats,  # 传入真实文本
+                epsilon=config["epsilon"],
+                alpha=config["alpha"],
+                steps=config["steps"],
+                decay=config["decay"],
+                targeted=False  # False 表示我们要 maximize distance
+            )
+
+            # 提取对抗样本特征
+            with torch.no_grad():
+                norm_adv = attacker.normalizer(adv_images)
+                adv_emb = model.get_image_features(pixel_values=norm_adv)
+                adv_img_feats.append(adv_emb.cpu())
+
+            # 保存第一张图看看效果
+            if i == 0:
+                save_name = f"vis_{config['name']}.png"
+                visualize_attack_result(images[0], adv_images[0], save_name=save_name)
+
+        # 拼接特征并评估
+        adv_img_feats = torch.cat(adv_img_feats, dim=0).to(device)
+        adv_metrics = evaluate_global_retrieval(adv_img_feats, text_feats)
+
+        print(f"[{config['name']}] Result: R@1={adv_metrics['R@1']:.2f}%, MR={adv_metrics['Mean Rank']:.2f}")
+
+        # 记录结果
+        res_dict = {"Method": config['name']}
+        res_dict.update(adv_metrics)
+        final_results.append(res_dict)
+
+    # --- F. 打印最终论文表格 ---
+    print("\n" + "=" * 50)
+    print("FINAL EXPERIMENTAL RESULTS (Copy to your paper)")
+    print("=" * 50)
+
+    df = pd.DataFrame(final_results)
+    # 调整列顺序
+    cols = ["Method", "R@1", "R@3", "R@5", "R@10", "Mean Rank"]
+    print(df[cols].to_markdown(index=False, floatfmt=".2f"))
+    print("=" * 50)
 
 
 if __name__ == "__main__":
