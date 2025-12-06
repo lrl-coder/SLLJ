@@ -54,7 +54,7 @@ class LocalFlickrDataset(Dataset):
     读取本地 CSV/TXT 标注文件，并加载对应的图片。
     """
 
-    def __init__(self, images_dir, ann_file, img_size=224, max_samples=None, delimiter='|'):
+    def __init__(self, images_dir, ann_file, img_size=224, max_samples=None, delimiter='|', text_per_sample=5):
         """
         Args:
             images_dir (str): 存放图片的文件夹路径 (例如 'flickr30k_images/')
@@ -65,6 +65,8 @@ class LocalFlickrDataset(Dataset):
         """
         self.images_dir = images_dir
         self.img_size = img_size
+        self.text_per_sample = text_per_sample
+        
 
         # --- 1. 解析标注文件 ---
         print(f"[Dataset] Loading annotations from {ann_file}...")
@@ -85,9 +87,8 @@ class LocalFlickrDataset(Dataset):
             if not img_col or not txt_col:
                 raise ValueError(f"无法识别列名。检测到的列名: {self.df.columns}")
 
-            # 仅保留每张图的第一条 Caption (作为 Ground Truth)
-            # 很多数据集一张图有5条描述，我们去重只取第一条
-            self.data = self.df.drop_duplicates(subset=[img_col], keep='first')[[img_col, txt_col]].values.tolist()
+            # （全量comment）
+            self.data = self.df[[img_col, txt_col]].values.tolist()
 
         except Exception as e:
             print(f"[Error] 解析标注文件失败: {e}")
@@ -96,7 +97,7 @@ class LocalFlickrDataset(Dataset):
 
         # --- 2. 截取子集 (调试用) ---
         if max_samples is not None:
-            self.data = self.data[:max_samples]
+            self.data = self.data[:max_samples * text_per_sample]
             print(f"[Dataset] Debug mode: limit to {max_samples} samples.")
 
         print(f"[Dataset] Loaded {len(self.data)} image-text pairs.")
@@ -121,16 +122,13 @@ class LocalFlickrDataset(Dataset):
         try:
             image = Image.open(img_path).convert("RGB")
         except Exception:
-            # 如果找不到图片 (比如文件名对不上)，生成一张灰图
-            # print(f"[Warning] Image not found: {img_path}")
             image = Image.new('RGB', (self.img_size, self.img_size), color='gray')
 
         image_tensor = self.preprocess(image)
-
-        # 确保文本是字符串类型
         text = str(text).strip()
 
-        return image_tensor, text
+        # 多返回一个 img_name 用于后续 ID 匹配
+        return image_tensor, text, str(img_name)
 
 # 辅助函数：由于攻击时需要手动 Normalize
 class DifferentiableNormalize(torch.nn.Module):
