@@ -1,0 +1,86 @@
+{
+    "metrics": [
+        {
+            "Method": "Clean (No Attack)",
+            "R@1": 81.0,
+            "R@3": 94.0,
+            "R@5": 97.3,
+            "R@10": 98.9,
+            "Mean Rank": 1.879
+        },
+        {
+            "Method": "FGSM",
+            "R@1": 43.36,
+            "R@3": 61.53999999999999,
+            "R@5": 70.02000000000001,
+            "R@10": 78.84,
+            "Mean Rank": 20.8488
+        },
+        {
+            "Method": "FGSM + JPEG",
+            "R@1": 48.36,
+            "R@3": 66.94,
+            "R@5": 74.62,
+            "R@10": 82.67999999999999,
+            "Mean Rank": 14.9278
+        },
+        {
+            "Method": "PGD",
+            "R@1": 0.13999999999999999,
+            "R@3": 0.36,
+            "R@5": 0.62,
+            "R@10": 0.96,
+            "Mean Rank": 2453.5892
+        },
+        {
+            "Method": "PGD + JPEG",
+            "R@1": 15.24,
+            "R@3": 25.259999999999998,
+            "R@5": 30.7,
+            "R@10": 38.36,
+            "Mean Rank": 198.942
+        },
+        {
+            "Method": "MI-FGSM",
+            "R@1": 0.12,
+            "R@3": 0.27999999999999997,
+            "R@5": 0.44,
+            "R@10": 0.72,
+            "Mean Rank": 2722.4262
+        },
+        {
+            "Method": "MI-FGSM + JPEG",
+            "R@1": 8.7,
+            "R@3": 15.18,
+            "R@5": 18.96,
+            "R@10": 25.540000000000003,
+            "Mean Rank": 387.252
+        }
+    ],
+    "sample_cases": [
+        {
+            "Method": "FGSM",
+            "Image": "1000092795.jpg",
+            "True_Text": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Original_Top1": "Two young , White males are outside near many bushes .",
+            "Attacked_Top1": "At night , two men in glasses crouch near some plants .",
+            "Defended_Top1": "Elderly man with cane bends down to look at some plants and is steadied from behind ."
+        },
+        {
+            "Method": "PGD",
+            "Image": "1000092795.jpg",
+            "True_Text": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Original_Top1": "Two young , White males are outside near many bushes .",
+            "Attacked_Top1": "Two people are on a path using a map and a compass .",
+            "Defended_Top1": "Elderly man with cane bends down to look at some plants and is steadied from behind ."
+        },
+        {
+            "Method": "MI-FGSM",
+            "Image": "1000092795.jpg",
+            "True_Text": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Original_Top1": "Two young , White males are outside near many bushes .",
+            "Attacked_Top1": "Two people are on a path using a map and a compass .",
+            "Defended_Top1": "Elderly man with cane bends down to look at some plants and is steadied from behind ."
+        }
+    ]
+}

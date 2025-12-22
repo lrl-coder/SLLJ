@@ -2,6 +2,9 @@ import os
 import torch
 import numpy as np
 import pandas as pd
+import json
+import datetime
+import shutil
 from torch.utils.data import DataLoader
 from transformers import CLIPProcessor, CLIPModel
 import matplotlib
@@ -12,203 +15,250 @@ matplotlib.use('Agg')
 
 from dataset import LocalFlickrDataset
 from attacker import MultimodalAttacker
-# 注意这里引入的是更新后的 evaluate_global_retrieval
 from utils import setup_seed, visualize_attack_result, evaluate_global_retrieval, plot_performance_comparison
-from defence import jpeg_compress_defense
+from defence import jpeg_compress_defense, batch_jpeg_compress_defense
+
+torch.backends.cudnn.benchmark = True
+
+model_list = ['openai/clip-vit-base-patch32', 'openai/clip-vit-large-patch14', 'openai/clip-vit-base-patch16', 'openai/clip-vit-large-patch14-336']
+
+def get_top1_text_prediction(image_embed, text_embeds, all_texts):
+    """
+    辅助函数：给定一张图片的特征，在所有文本中检索相似度最高的文本
+    """
+    # image_embed: (1, D)
+    # text_embeds: (N_texts, D)
+    # Normalize
+    image_embed = image_embed / image_embed.norm(dim=-1, keepdim=True)
+    text_embeds = text_embeds / text_embeds.norm(dim=-1, keepdim=True)
+    
+    # Cosine Similarity
+    sim = torch.matmul(image_embed, text_embeds.t()) # (1, N_texts)
+    
+    # Get Top-1 Index
+    top1_idx = torch.argmax(sim).item()
+    return all_texts[top1_idx]
 
 def main():
-    setup_seed(2025)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Running on device: {device}")
+    for i in range(4):
+      # 1. 实验初始化与目录创建
+      setup_seed(2025)
+      device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    dataset_config = {
-        "dataset_root": r"../../dataset/flickr30k_images",
-        "ann_file": r"../../dataset/flickr30k_images/results.csv",
-        "max_samples": 1000,
-        "batch_size": 32,
-        # 修改：禁用 interim 采样，确保每个 batch 都对全量文本库进行检索评估
-        "use_sampling_for_interim": False 
-    }
+      
+      # 创建带时间戳的实验目录
+      timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+      exp_dir = os.path.join("results", f"exp_{timestamp}")
+      os.makedirs(exp_dir, exist_ok=True)
+      print(f"--- Experiment Results will be saved to: {exp_dir} ---")
 
-    configurations = [
-        {"name": "FGSM", "epsilon": 8/255, "alpha": 8/255, "steps": 1, "decay": 0.0},
-        {"name": "PGD", "epsilon": 8/255, "alpha": 2/255, "steps": 10, "decay": 0.0},
-        {"name": "MI-FGSM", "epsilon": 8/255, "alpha": 2/255, "steps": 10, "decay": 1.0}
-    ]
+      dataset_config = {
+          "dataset_root": r"../flickr30k_images",
+          "ann_file": r"../flickr30k_images/results.csv",
+          "max_samples": 1000,
+          "batch_size": 16,
+      }
 
-    images_dir = os.path.join(dataset_config["dataset_root"], "flickr30k_images")
-    dataset = LocalFlickrDataset(
-        images_dir=images_dir,
-        ann_file=dataset_config["ann_file"],
-        max_samples=dataset_config.get("max_samples", None),
-        delimiter='|'
-    )
+      configurations = [
+          {"name": "FGSM", "epsilon": 8/255, "alpha": 8/255, "steps": 1, "decay": 0.0},
+          {"name": "PGD", "epsilon": 8/255, "alpha": 2/255, "steps": 10, "decay": 0.0},
+          {"name": "MI-FGSM", "epsilon": 8/255, "alpha": 2/255, "steps": 10, "decay": 1.0}
+      ]
+      model_id = model_list[i]
+      jpeg_quality = 25
+      # --- 修复核心：根据模型 ID 自动确定分辨率 ---
+      if "336" in model_id:
+          img_size = 336
+      else:
+          img_size = 224
 
-    if len(dataset) == 0:
-        print("Error: 数据集加载为空，请检查路径。")
-        return
+      # 2. 保存配置文件 (JSON)
+      config_save_path = os.path.join(exp_dir, "config.json")
+      with open(config_save_path, 'w', encoding='utf-8') as f:
+          json.dump({
+              "model_id": model_id,
+              "dataset_config": dataset_config,
+              "attack_configurations": configurations,
+              "jpeg_quality": jpeg_quality,
+              "device": device
+          }, f, indent=4, ensure_ascii=False)
 
-    dataloader = DataLoader(dataset, batch_size=dataset_config["batch_size"], shuffle=False, num_workers=0)
+      # 3. 加载数据与模型
+      images_dir = os.path.join(dataset_config["dataset_root"], "flickr30k_images")
+      dataset = LocalFlickrDataset(
+          images_dir=images_dir,
+          ann_file=dataset_config["ann_file"],
+          max_samples=dataset_config.get("max_samples", None),
+          delimiter='|',
+          img_size=img_size
+      )
 
-    print("\n--- Loading CLIP Model ---")
-    model_id = "openai/clip-vit-base-patch32"
-    model = CLIPModel.from_pretrained(model_id).to(device)
-    processor = CLIPProcessor.from_pretrained(model_id)
-    attacker = MultimodalAttacker(model, processor, device)
+      if len(dataset) == 0:
+          print("Error: 数据集加载为空，请检查路径。")
+          return
 
-    final_results = []
+      dataloader = DataLoader(dataset, 
+                              batch_size=dataset_config["batch_size"], 
+                              shuffle=False, 
+                              num_workers=8,
+                              pin_memory=True)
 
-    print("\n[Phase 1] Evaluating Clean Performance & Building Global Index")
-    clean_img_feats_list = []
-    text_feats_list = []
-    all_img_names = []
-    text_image_map = []  # List[str]: 记录每个文本特征向量对应的 image_name
+      print("\n--- Loading CLIP Model ---")
+      model = CLIPModel.from_pretrained(model_id).to(device)
+      processor = CLIPProcessor.from_pretrained(model_id, use_fast=True)
+      attacker = MultimodalAttacker(model, processor, device)
 
-    for images, texts, img_names in tqdm(dataloader, desc="Extracting Clean Feats"):
-        images = images.to(device)
-        with torch.no_grad():
-            norm_imgs = attacker.normalizer(images)
-            img_emb = model.get_image_features(pixel_values=norm_imgs)
-            clean_img_feats_list.append(img_emb.cpu())
+      final_results = []
+      sample_logs = [] # 用于记录具体的 Top-1 文本案例
 
-            # 提取文本特征
-            txt_emb = attacker.get_text_features(list(texts))
-            text_feats_list.append(txt_emb.cpu())
+      print("\n[Phase 1] Evaluating Clean Performance & Building Global Index")
+      clean_img_feats_list = []
+      text_feats_list = []
+      all_img_names = []
+      text_image_map = []
+      all_texts_raw = [] # 存储原始文本字符串，用于后续检索 Top-1 内容
 
-            # 记录用于后续匹配的元数据
-            all_img_names.extend(img_names)
-            text_image_map.extend(list(img_names))
+      for images, texts, img_names in tqdm(dataloader, desc="Extracting Clean Feats"):
+          images = images.to(device)
+          with torch.no_grad():
+              norm_imgs = attacker.normalizer(images)
+              img_emb = model.get_image_features(pixel_values=norm_imgs)
+              clean_img_feats_list.append(img_emb.cpu())
 
-    clean_img_feats = torch.cat(clean_img_feats_list, dim=0).to(device)
-    text_feats = torch.cat(text_feats_list, dim=0).to(device)
-    
-    # === 关键步骤：预构建全局 Ground Truth 映射 ===
-    # 将 list 转换为 dict: {image_name: [text_idx1, text_idx2, ...]}
-    # 这样在评估时，只需 O(1) 就能获取一张图片对应的所有正确文本索引
-    print("[Info] Building Global Ground-Truth Map...")
-    gt_map = defaultdict(list)
-    for t_idx, imgname in enumerate(text_image_map):
-        gt_map[imgname].append(t_idx)
+              txt_emb = attacker.get_text_features(list(texts))
+              text_feats_list.append(txt_emb.cpu())
 
-    # 计算 Clean 全局指标
-    clean_metrics = evaluate_global_retrieval(
-        clean_img_feats, text_feats, all_img_names, gt_map, k_list=[1,3,5,10], batch_size=256, device=device
-    )
-    print(f"Clean Metrics: R@1={clean_metrics['R@1']:.2f}%, MR={clean_metrics['Mean Rank']:.2f}")
+              all_img_names.extend(img_names)
+              text_image_map.extend(list(img_names))
+              all_texts_raw.extend(list(texts)) # 收集所有文本
 
-    final_results.append({
-        "Method": "Clean (No Attack)",
-        "R@1": clean_metrics['R@1'],
-        "R@3": clean_metrics['R@3'],
-        "R@5": clean_metrics['R@5'],
-        "R@10": clean_metrics['R@10'],
-        "Mean Rank": clean_metrics['Mean Rank']
-    })
+      clean_img_feats = torch.cat(clean_img_feats_list, dim=0).to(device)
+      text_feats = torch.cat(text_feats_list, dim=0).to(device)
+      
+      print("[Info] Building Global Ground-Truth Map...")
+      gt_map = defaultdict(list)
+      for t_idx, imgname in enumerate(text_image_map):
+          gt_map[imgname].append(t_idx)
 
-    print("\n[Phase 2] Comparative Experiment (Attack & Defense)")
+      # Clean Metrics
+      clean_metrics = evaluate_global_retrieval(
+          clean_img_feats, text_feats, all_img_names, gt_map, k_list=[1,3,5,10], batch_size=256, device=device
+      )
+      print(f"Clean Metrics: R@1={clean_metrics['R@1']:.2f}%, MR={clean_metrics['Mean Rank']:.2f}")
 
-    for config in configurations:
-        print(f"\n>>> Mode: {config['name']}")
-        adv_img_feats = []
-        defended_img_feats = []
+      final_results.append({
+          "Method": "Clean (No Attack)",
+          **clean_metrics
+      })
 
-        pbar = tqdm(dataloader, desc=f"[{config['name']}] Running")
-        for i, (images, texts, img_names) in enumerate(pbar):
-            images = images.to(device)
-            with torch.no_grad():
-                current_text_feats = attacker.get_text_features(list(texts)).to(device)
+      print("\n[Phase 2] Comparative Experiment (Attack & Defense)")
 
-            # 1. 生成对抗样本
-            adv_images = attacker.mi_fgsm_attack(
-                images,
-                current_text_feats,
-                epsilon=config["epsilon"],
-                alpha=config["alpha"],
-                steps=config["steps"],
-                decay=config["decay"],
-                targeted=False
-            )
+      for config in configurations:
+          print(f"\n>>> Mode: {config['name']}")
+          adv_img_feats = []
+          defended_img_feats = []
+          
+          # 用于记录当前方法的 Sample 案例
+          sample_log_entry = {"Method": config['name']}
 
-            # 2. 防御：JPEG 压缩
-            defended_images_batch = []
-            for j in range(adv_images.size(0)):
-                def_img = jpeg_compress_defense(adv_images[j], quality=50)
-                defended_images_batch.append(def_img)
-            defended_images = torch.stack(defended_images_batch).to(device)
-            defended_images = defended_images.clamp(0.0, 1.0)
+          pbar = tqdm(dataloader, desc=f"[{config['name']}] Running")
+          for i, (images, texts, img_names) in enumerate(pbar):
+              images = images.to(device)
+              with torch.no_grad():
+                  current_text_feats = attacker.get_text_features(list(texts)).to(device)
 
-            # 3. 特征提取
-            with torch.no_grad():
-                norm_adv = attacker.normalizer(adv_images)
-                adv_emb = model.get_image_features(pixel_values=norm_adv)
-                adv_img_feats.append(adv_emb.cpu())
+              # Attack
+              adv_images = attacker.mi_fgsm_attack(
+                  images, current_text_feats,
+                  epsilon=config["epsilon"], alpha=config["alpha"],
+                  steps=config["steps"], decay=config["decay"], targeted=False
+              )
 
-                norm_def = attacker.normalizer(defended_images)
-                def_emb = model.get_image_features(pixel_values=norm_def)
-                defended_img_feats.append(def_emb.cpu())
+              # Defense
+              defended_images = batch_jpeg_compress_defense(adv_images, quality=jpeg_quality)
+              defended_images = defended_images.clamp(0.0, 1.0)
 
-                # --- 实时评估 (Interim Evaluation) ---
-                # 使用当前 batch 的图片，去检索【全局】文本库 (text_feats)
-                # 并使用预计算的 gt_map 判定正确性
-                # 耗时！！
-                # batch_adv_metrics = evaluate_global_retrieval(
-                #     adv_emb.to(device), 
-                #     text_feats,     # 全局文本
-                #     list(img_names),# 当前 batch 图片名
-                #     gt_map,         # 全局 GT 映射
-                #     k_list=[1], 
-                #     batch_size=adv_emb.size(0), 
-                #     device=device
-                # )
-                
-                # batch_def_metrics = evaluate_global_retrieval(
-                #     def_emb.to(device), 
-                #     text_feats, 
-                #     list(img_names), 
-                #     gt_map, 
-                #     k_list=[1], 
-                #     batch_size=def_emb.size(0), 
-                #     device=device
-                # )
+              # Extract Features
+              with torch.no_grad():
+                  norm_adv = attacker.normalizer(adv_images)
+                  adv_emb = model.get_image_features(pixel_values=norm_adv)
+                  adv_img_feats.append(adv_emb.cpu())
 
-                # pbar.set_postfix({
-                #     "Adv_R1": f"{batch_adv_metrics['R@1']:.1f}%", 
-                #     "Def_R1": f"{batch_def_metrics['R@1']:.1f}%"
-                # })
+                  norm_def = attacker.normalizer(defended_images)
+                  def_emb = model.get_image_features(pixel_values=norm_def)
+                  defended_img_feats.append(def_emb.cpu())
+              
+              # --- 可视化与 Top-1 文本记录 (仅对每种方法的第一个 Batch 的第一张图做) ---
+              if i == 0:
+                  # 保存可视化图片到实验文件夹
+                  save_name = os.path.join(exp_dir, f"vis_{config['name']}.png")
+                  visualize_attack_result(images[0].cpu(), adv_images[0].cpu(), save_name=save_name)
+                  
+                  # 计算并记录 Top-1 文本
+                  # 获取该样本的 Clean Feature (需要从全局列表中找，或者重新计算)
+                  # 这里为了方便直接重新计算 Clean Feature
+                  with torch.no_grad():
+                      norm_clean_sample = attacker.normalizer(images[0:1])
+                      clean_sample_emb = model.get_image_features(pixel_values=norm_clean_sample)
+                  
+                  # 检索 Top-1
+                  pred_clean = get_top1_text_prediction(clean_sample_emb, text_feats, all_texts_raw)
+                  pred_adv = get_top1_text_prediction(adv_emb[0:1].to(device), text_feats, all_texts_raw)
+                  pred_def = get_top1_text_prediction(def_emb[0:1].to(device), text_feats, all_texts_raw)
+                  
+                  # 记录到日志字典
+                  sample_log_entry["Image"] = str(img_names[0])
+                  sample_log_entry["True_Text"] = str(texts[0])
+                  sample_log_entry["Original_Top1"] = pred_clean
+                  sample_log_entry["Attacked_Top1"] = pred_adv
+                  sample_log_entry["Defended_Top1"] = pred_def
+                  
+                  sample_logs.append(sample_log_entry)
+                  
+                  print(f"\n[Sample Log] Image: {img_names[0]}")
+                  print(f"  > Original Top1: {pred_clean[:60]}...")
+                  print(f"  > Attacked Top1: {pred_adv[:60]}...")
 
-            if i == 0:
-                os.makedirs("out", exist_ok=True)
-                save_name = f"out/vis_{config['name']}.png"
-                visualize_attack_result(images[0].cpu(), adv_images[0].cpu(), save_name=save_name)
+          # 全局评估
+          adv_img_feats = torch.cat(adv_img_feats, dim=0).to(device)
+          adv_metrics = evaluate_global_retrieval(adv_img_feats, text_feats, all_img_names, gt_map, k_list=[1,3,5,10], batch_size=256, device=device)
+          
+          final_results.append({"Method": config['name'], **adv_metrics})
 
-        # 全局评估（合并所有 batch 的特征）
-        # 虽然 batch 内部已经是全局检索，这里为了统计 R@3/5/10 仍然做一次汇总
-        adv_img_feats = torch.cat(adv_img_feats, dim=0).to(device)
-        adv_metrics = evaluate_global_retrieval(adv_img_feats, text_feats, all_img_names, gt_map, k_list=[1,3,5,10], batch_size=256, device=device)
-        print(f"[{config['name']}] FINAL Attack R@1: {adv_metrics['R@1']:.2f}%")
+          defended_img_feats = torch.cat(defended_img_feats, dim=0).to(device)
+          def_metrics = evaluate_global_retrieval(defended_img_feats, text_feats, all_img_names, gt_map, k_list=[1,3,5,10], batch_size=256, device=device)
+          
+          final_results.append({"Method": config['name'] + " + JPEG", **def_metrics})
 
-        res_dict = {"Method": config['name']}
-        res_dict.update(adv_metrics)
-        final_results.append(res_dict)
+      # 4. 实验结束：保存所有结果
+      print("\n" + "="*60)
+      print("FINAL EXPERIMENTAL RESULTS")
+      print("="*60)
+      
+      # 转换为 DataFrame
+      df = pd.DataFrame(final_results)
+      cols = ["Method", "R@1", "R@3", "R@5", "R@10", "Mean Rank"]
+      print(df[cols].to_markdown(index=False, floatfmt=".2f"))
+      
+      # 保存结果 CSV
+      csv_path = os.path.join(exp_dir, "results.csv")
+      df[cols].to_csv(csv_path, index=False)
+      print(f"[Saved] Metrics saved to {csv_path}")
 
-        defended_img_feats = torch.cat(defended_img_feats, dim=0).to(device)
-        def_metrics = evaluate_global_retrieval(defended_img_feats, text_feats, all_img_names, gt_map, k_list=[1,3,5,10], batch_size=256, device=device)
-        print(f"[{config['name']} + JPEG] FINAL Defense R@1: {def_metrics['R@1']:.2f}%")
+      # 保存结果 JSON (包含详细 Sample Log)
+      json_result_path = os.path.join(exp_dir, "results.json")
+      full_output = {
+          "metrics": final_results,
+          "sample_cases": sample_logs
+      }
+      with open(json_result_path, 'w', encoding='utf-8') as f:
+          json.dump(full_output, f, indent=4, ensure_ascii=False)
+      print(f"[Saved] Detailed JSON results saved to {json_result_path}")
 
-        res_dict_def = {"Method": config['name'] + " + JPEG"}
-        res_dict_def.update(def_metrics)
-        final_results.append(res_dict_def)
-
-    print("\n" + "="*60)
-    print("FINAL EXPERIMENTAL RESULTS")
-    print("="*60)
-    df = pd.DataFrame(final_results)
-    cols = ["Method", "R@1", "R@3", "R@5", "R@10", "Mean Rank"]
-    print(df[cols].to_markdown(index=False, floatfmt=".2f"))
-    print("="*60)
-
-    plot_performance_comparison(final_results, save_name="experiment_summary.png")
-    print("\n[Done] Summary chart saved.")
+      # 保存 Summary 图片
+      summary_plot_path = os.path.join(exp_dir, "experiment_summary.png")
+      plot_performance_comparison(final_results, save_name=summary_plot_path)
+      print(f"[Saved] Summary chart saved to {summary_plot_path}")
 
 if __name__ == "__main__":
     main()

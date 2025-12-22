@@ -1,0 +1,86 @@
+{
+    "metrics": [
+        {
+            "Method": "Clean (No Attack)",
+            "R@1": 85.2,
+            "R@3": 95.19999999999999,
+            "R@5": 97.6,
+            "R@10": 99.1,
+            "Mean Rank": 1.747
+        },
+        {
+            "Method": "FGSM",
+            "R@1": 60.36,
+            "R@3": 76.58,
+            "R@5": 82.78,
+            "R@10": 89.48,
+            "Mean Rank": 7.5974
+        },
+        {
+            "Method": "FGSM + JPEG",
+            "R@1": 66.36,
+            "R@3": 82.26,
+            "R@5": 88.02,
+            "R@10": 92.97999999999999,
+            "Mean Rank": 4.8262
+        },
+        {
+            "Method": "PGD",
+            "R@1": 1.9,
+            "R@3": 3.46,
+            "R@5": 4.4799999999999995,
+            "R@10": 6.5,
+            "Mean Rank": 1171.385
+        },
+        {
+            "Method": "PGD + JPEG",
+            "R@1": 40.660000000000004,
+            "R@3": 57.32000000000001,
+            "R@5": 64.8,
+            "R@10": 74.08,
+            "Mean Rank": 30.2168
+        },
+        {
+            "Method": "MI-FGSM",
+            "R@1": 1.26,
+            "R@3": 2.5,
+            "R@5": 3.18,
+            "R@10": 4.84,
+            "Mean Rank": 1541.3466
+        },
+        {
+            "Method": "MI-FGSM + JPEG",
+            "R@1": 29.580000000000002,
+            "R@3": 43.82,
+            "R@5": 51.239999999999995,
+            "R@10": 62.0,
+            "Mean Rank": 66.3294
+        }
+    ],
+    "sample_cases": [
+        {
+            "Method": "FGSM",
+            "Image": "1000092795.jpg",
+            "True_Text": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Original_Top1": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Attacked_Top1": "Two men in green shirts are standing in a yard .",
+            "Defended_Top1": "Two men in green shirts are standing in a yard ."
+        },
+        {
+            "Method": "PGD",
+            "Image": "1000092795.jpg",
+            "True_Text": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Original_Top1": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Attacked_Top1": "A woman uses a drill while another man takes her picture .",
+            "Defended_Top1": "A woman pulls a dog through a door ."
+        },
+        {
+            "Method": "MI-FGSM",
+            "Image": "1000092795.jpg",
+            "True_Text": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Original_Top1": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Attacked_Top1": "A woman uses a drill while another man takes her picture .",
+            "Defended_Top1": "A woman with a floral shirt and purse and a man with a black shirt are walking while another man walks behind them ."
+        }
+    ]
+}

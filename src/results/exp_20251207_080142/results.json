@@ -1,0 +1,86 @@
+{
+    "metrics": [
+        {
+            "Method": "Clean (No Attack)",
+            "R@1": 81.0,
+            "R@3": 94.0,
+            "R@5": 97.3,
+            "R@10": 98.9,
+            "Mean Rank": 1.879
+        },
+        {
+            "Method": "FGSM",
+            "R@1": 43.36,
+            "R@3": 61.53999999999999,
+            "R@5": 70.02000000000001,
+            "R@10": 78.84,
+            "Mean Rank": 20.8492
+        },
+        {
+            "Method": "FGSM + JPEG",
+            "R@1": 62.62,
+            "R@3": 79.47999999999999,
+            "R@5": 85.32,
+            "R@10": 90.9,
+            "Mean Rank": 6.8138
+        },
+        {
+            "Method": "PGD",
+            "R@1": 0.13999999999999999,
+            "R@3": 0.42,
+            "R@5": 0.66,
+            "R@10": 1.02,
+            "Mean Rank": 2454.1264
+        },
+        {
+            "Method": "PGD + JPEG",
+            "R@1": 62.419999999999995,
+            "R@3": 78.88,
+            "R@5": 84.44,
+            "R@10": 90.75999999999999,
+            "Mean Rank": 6.8694
+        },
+        {
+            "Method": "MI-FGSM",
+            "R@1": 0.12,
+            "R@3": 0.27999999999999997,
+            "R@5": 0.44,
+            "R@10": 0.7000000000000001,
+            "Mean Rank": 2722.4864
+        },
+        {
+            "Method": "MI-FGSM + JPEG",
+            "R@1": 53.12,
+            "R@3": 70.96000000000001,
+            "R@5": 77.52,
+            "R@10": 84.82,
+            "Mean Rank": 12.4492
+        }
+    ],
+    "sample_cases": [
+        {
+            "Method": "FGSM",
+            "Image": "1000092795.jpg",
+            "True_Text": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Original_Top1": "Two young , White males are outside near many bushes .",
+            "Attacked_Top1": "At night , two men in glasses crouch near some plants .",
+            "Defended_Top1": "A man standing in a hole in front of a woman in a garden ."
+        },
+        {
+            "Method": "PGD",
+            "Image": "1000092795.jpg",
+            "True_Text": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Original_Top1": "Two young , White males are outside near many bushes .",
+            "Attacked_Top1": "Two people are on a path using a map and a compass .",
+            "Defended_Top1": "A man standing in a hole in front of a woman in a garden ."
+        },
+        {
+            "Method": "MI-FGSM",
+            "Image": "1000092795.jpg",
+            "True_Text": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Original_Top1": "Two young , White males are outside near many bushes .",
+            "Attacked_Top1": "Two people are on a path using a map and a compass .",
+            "Defended_Top1": "A boy wearing a blue shirt is looking at a plant ."
+        }
+    ]
+}

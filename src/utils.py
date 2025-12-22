@@ -72,7 +72,7 @@ def evaluate_global_retrieval(image_embeds, text_embeds, img_names, gt_map, k_li
         # 2. 全量排序 (Full Sort)
         # 使用 argsort 获取所有文本的排名索引（从高相似度到低相似度）
         # 返回 shape: [B, N_texts]
-        # 注意：这里会比 topk 慢，因为要对所有 15w+ 文本进行排序
+        # 注意：这里会比 topk 慢，因为要对所有文本进行排序
         sorted_idx = torch.argsort(sim, dim=1, descending=True).cpu().numpy()
 
         # 3. 逐个样本计算指标

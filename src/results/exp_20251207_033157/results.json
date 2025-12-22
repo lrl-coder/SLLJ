@@ -1,0 +1,86 @@
+{
+    "metrics": [
+        {
+            "Method": "Clean (No Attack)",
+            "R@1": 86.5,
+            "R@3": 95.19999999999999,
+            "R@5": 97.7,
+            "R@10": 99.2,
+            "Mean Rank": 1.661
+        },
+        {
+            "Method": "FGSM",
+            "R@1": 65.06,
+            "R@3": 81.12,
+            "R@5": 87.14,
+            "R@10": 93.16,
+            "Mean Rank": 4.8608
+        },
+        {
+            "Method": "FGSM + JPEG",
+            "R@1": 69.76,
+            "R@3": 84.54,
+            "R@5": 90.46,
+            "R@10": 94.67999999999999,
+            "Mean Rank": 3.966
+        },
+        {
+            "Method": "PGD",
+            "R@1": 2.16,
+            "R@3": 4.24,
+            "R@5": 5.46,
+            "R@10": 8.12,
+            "Mean Rank": 1097.008
+        },
+        {
+            "Method": "PGD + JPEG",
+            "R@1": 36.94,
+            "R@3": 53.300000000000004,
+            "R@5": 61.46,
+            "R@10": 71.64,
+            "Mean Rank": 38.4434
+        },
+        {
+            "Method": "MI-FGSM",
+            "R@1": 2.1,
+            "R@3": 3.82,
+            "R@5": 5.140000000000001,
+            "R@10": 7.08,
+            "Mean Rank": 1235.2384
+        },
+        {
+            "Method": "MI-FGSM + JPEG",
+            "R@1": 28.439999999999998,
+            "R@3": 42.14,
+            "R@5": 49.34,
+            "R@10": 59.12,
+            "Mean Rank": 76.5044
+        }
+    ],
+    "sample_cases": [
+        {
+            "Method": "FGSM",
+            "Image": "1000092795.jpg",
+            "True_Text": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Original_Top1": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Attacked_Top1": "Two men in green shirts are standing in a yard .",
+            "Defended_Top1": "Two men in green shirts are standing in a yard ."
+        },
+        {
+            "Method": "PGD",
+            "Image": "1000092795.jpg",
+            "True_Text": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Original_Top1": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Attacked_Top1": "A technician is figuring out the best way to open a huge safe .",
+            "Defended_Top1": "A man in a brown shirt prepares to close the door ."
+        },
+        {
+            "Method": "MI-FGSM",
+            "Image": "1000092795.jpg",
+            "True_Text": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Original_Top1": "Two young guys with shaggy hair look at their hands while hanging out in the yard .",
+            "Attacked_Top1": "A man in a tank top stands next to a chrome door .",
+            "Defended_Top1": "A man in a tank top stands next to a chrome door ."
+        }
+    ]
+}
