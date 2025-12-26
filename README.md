@@ -18,23 +18,23 @@
 
 ```
 src/
-├── main.py                     # 主实验程序（攻击+防御）
-├── transfer_main.py            # 迁移性实验程序
-├── environment.yml             # Conda 环境配置文件
-├── config/                     # 配置文件目录
-│   ├── algorithm_config.py     # 攻击算法配置 (FGSM/PGD/MI-FGSM)
-│   ├── eval_dataset_config.py  # 评估数据集配置
+├── main.py                        # 主实验程序（攻击+防御）
+├── transfer_main.py               # 迁移性实验程序
+├── environment.yml                # Conda 环境配置文件
+├── config/                        # 配置文件目录
+│   ├── algorithm_config.py        # 攻击算法配置 (FGSM/PGD/MI-FGSM)
+│   ├── eval_dataset_config.py     # 评估数据集配置
 │   └── transfer_dataset_config.py # 迁移实验数据集配置
-├── utils/                      # 工具函数目录
-│   ├── dataset.py              # 数据集加载器
-│   ├── attacker.py             # 对抗攻击实现 (MultimodalAttacker)
-│   ├── defence.py              # 并行 JPEG 防御实现
-│   └── utils.py                # 检索指标 (Recall@K) 计算与可视化工具
-├── data/                       # 数据目录 (已准备好)
-│   ├── flickr1k_test_images/   # 测试图像目录
-│   ├── results.csv             # 标注文件
-│   └── test.txt                # 测试集白名单
-└── results/                    # 实验结果自动输出目录
+├── utils/                         # 工具函数目录
+│   ├── dataset.py                 # 数据集加载器
+│   ├── attacker.py                # 对抗攻击实现 (MultimodalAttacker)
+│   ├── defence.py                 # 并行 JPEG 防御实现
+│   └── utils.py                   # 检索指标 (Recall@K) 计算与可视化工具
+├── data/                          # 数据目录 (已准备好)
+│   ├── flickr1k_test_images/      # 测试图像目录
+│   ├── results.csv                # 标注文件
+│   └── test.txt                   # 测试集白名单
+└── results/                       # 实验结果自动输出目录
 ```
 
 ---
@@ -152,7 +152,7 @@ python main.py --model clip-vit-base-patch16 --jpeg_quality 75
 ```python
 dataset_config = {
     "dataset_root": r"data/flickr1k_test_images",  # 图像根目录
-    "ann_file": r"data/results.csv",                # 标注文件路径
+    "ann_file": r"data/results.csv",               # 标注文件路径
     "max_samples": 50,                             # 最大样本数（None表示全部）
     "whitelist_path": "data/test.txt",             # 白名单文件路径
     "batch_size": 16,                              # 批次大小
