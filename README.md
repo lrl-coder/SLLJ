@@ -17,26 +17,24 @@
 ## 目录结构
 
 ```
-src_copy/
-├── core/                          # 核心代码目录
-│   ├── main.py                    # 主实验程序（攻击+防御）
-│   ├── transfer_main.py           # 迁移性实验程序
-│   ├── environment.yml            # Conda环境配置文件
-│   ├── config/                    # 配置文件目录
-│   │   ├── algorithm_config.py    # 攻击算法配置
-│   │   ├── eval_dataset_config.py # 评估数据集配置
-│   │   └── transfer_dataset_config.py # 迁移实验数据集配置
-│   └── utils/                     # 工具函数目录
-│       ├── dataset.py             # 数据集加载器
-│       ├── attacker.py           # 对抗攻击实现
-│       ├── defence.py            # 防御机制实现
-│       └── utils.py              # 评估与可视化工具
-├── data/                          # 数据目录
-│   ├── flickr1k_test_images/     # Flickr30k测试图像（1000张）
-│   ├── results.csv                # 图像-文本标注文件
-│   └── test.txt                   # 测试集白名单（图片ID列表）
-└── results/                       # 实验结果输出目录
-    └── exp_YYYYMMDD_HHMMSS/      # 每次实验的结果文件夹
+src/
+├── main.py                     # 主实验程序（攻击+防御）
+├── transfer_main.py            # 迁移性实验程序
+├── environment.yml             # Conda 环境配置文件
+├── config/                     # 配置文件目录
+│   ├── algorithm_config.py     # 攻击算法配置 (FGSM/PGD/MI-FGSM)
+│   ├── eval_dataset_config.py  # 评估数据集配置
+│   └── transfer_dataset_config.py # 迁移实验数据集配置
+├── utils/                      # 工具函数目录
+│   ├── dataset.py              # 数据集加载器
+│   ├── attacker.py             # 对抗攻击实现 (MultimodalAttacker)
+│   ├── defence.py              # 并行 JPEG 防御实现
+│   └── utils.py                # 检索指标 (Recall@K) 计算与可视化工具
+├── data/                       # 数据目录 (已准备好)
+│   ├── flickr1k_test_images/   # 测试图像目录
+│   ├── results.csv             # 标注文件
+│   └── test.txt                # 测试集白名单
+└── results/                    # 实验结果自动输出目录
 ```
 
 ---
@@ -67,7 +65,7 @@ conda env create -f environment.yml
 conda activate multi-attacker
 ```
 
-#### 3. 配置HuggingFace镜像
+#### 3. <a id="HF">配置HuggingFace镜像</a>
 
 为保证正常从HuggingFace官网下载CLIP预训练权重，需配置HuggingFace镜像
 
@@ -85,7 +83,9 @@ export HF_ENDPOINT="https://hf-mirror.com"
 
 ### Flickr30k数据集
 
-项目使用Flickr30k的测试集进行实验，共1000个样本，数据集包含图像和对应的文本描述。
+项目使用Flickr30k的测试集进行实验，共1000个样本，数据集包含图像和对应的文本描述。项目中已包含完整的测试集。
+
+> **提示**：为节约复现校验的时间，默认配置中使用的样本数量为50。如需在完整数据集上运行实验，可在[数据集配置](#数据集配置)部分修改 `max_samples` 参数（设置为 `None` 表示使用全部1000个样本）。
 
 ### 数据集结构
 
@@ -103,7 +103,7 @@ data/
 
 ## 使用方法
 
-### 1. 主实验：对抗攻击与防御评估
+###  主实验：对抗攻击与防御评估
 
 运行主实验程序，评估不同攻击方法的效果以及JPEG防御的有效性。
 
@@ -141,21 +141,19 @@ python main.py
 # 使用base模型，JPEG质量75
 python main.py --model clip-vit-base-patch16 --jpeg_quality 75
 
-# 使用336分辨率模型
-python main.py --model clip-vit-large-patch14-336 --jpeg_quality 50
 ```
 
-#### 数据集配置
+#### <a id="数据集配置">数据集配置</a>
 
-编辑 `core/config/eval_dataset_config.py` 修改数据集设置：
+编辑 `config/eval_dataset_config.py` 修改数据集设置：
 
 ```python
 dataset_config = {
     "dataset_root": r"data/flickr1k_test_images",  # 图像根目录
     "ann_file": r"data/results.csv",                # 标注文件路径
-    "max_samples": 10,                             # 最大样本数（None表示全部）
+    "max_samples": 50,                             # 最大样本数（None表示全部）
     "whitelist_path": "data/test.txt",             # 白名单文件路径
-    "batch_size": 4,                              # 批次大小
+    "batch_size": 16,                              # 批次大小
 }
 ```
 
@@ -164,17 +162,34 @@ dataset_config = {
 
 #### 输出结果
 
-实验完成后，结果保存在 `results/exp_YYYYMMDD_HHMMSS/` 目录：
+实验完成后，结果保存在 `results/exp_YYYYMMDD_HHMMSS/` 目录，目录结构如下：
+
+<img src="README.assets/image-20251226130418278.png" alt="image-20251226130418278" style="zoom: 67%;" />  
 
 - `config.json`：实验配置信息
-- `results.csv`：评估指标（Recall@1, Recall@3, Recall@5, Recall@10, Mean Rank）
+- `results.csv`：评估指标（Recall@1, Recall@3, Recall@5, Recall@10, Mean Rank），如下图所示：
+
+<img src="README.assets/image-20251225204727789.png" alt="image-20251225204727789" style="zoom: 80%;" /> 
+
 - `results.json`：详细结果（包含样本案例）
+
 - `experiment_summary.png/pdf`：性能对比图表
+
+  <img src="README.assets/image-20251225204755704.png" alt="image-20251225204755704" style="zoom: 10%;" />   
+
 - `vis_FGSM.png/pdf`：FGSM攻击可视化
+
+  <img src="README.assets/image-20251225210320429.png" alt="image-20251225210320429" style="zoom:10%;" /> 
+
 - `vis_PGD.png/pdf`：PGD攻击可视化
+
+  <img src="README.assets/image-20251225210340704.png" alt="image-20251225210340704" style="zoom:10%;" /> 
+
 - `vis_MI-FGSM.png/pdf`：MI-FGSM攻击可视化
 
-### 2. 迁移性实验：跨模型攻击评估
+  <img src="README.assets/image-20251225210447948.png" alt="image-20251225210447948" style="zoom:10%;" /> 
+
+### 迁移性实验：跨模型攻击评估
 
 评估在一个模型上生成的对抗样本对另一个模型的攻击效果。
 
@@ -202,7 +217,7 @@ python transfer_main.py --source_model <源模型> --target_model <目标模型>
 
 - `--target_model`：目标模型名称（默认：`clip-vit-large-patch14`）
   - 可选值同上
-  - 目标模型用于评估迁移效果（黑盒评估）
+  - 目标模型用于评估迁移效果
 
 #### 使用示例
 
@@ -219,7 +234,7 @@ python transfer_main.py --source_model clip-vit-base-patch32 --target_model clip
 
 #### 数据集配置
 
-迁移性实验的数据集配置与主实验相同，配置文件位于 `core/config/transfer_dataset_config.py`。默认 `max_samples` 设置为 50 是为了节约时间，如需在完整1k测试集上运行，请将 `max_samples` 设置为 `None`。
+迁移性实验的数据集配置与主实验相同，配置文件位于 `config/transfer_dataset_config.py`。默认 `max_samples` 设置为 50 是为了节约时间，如需在完整1k测试集上运行，请将 `max_samples` 设置为 `None`。
 
 #### 输出结果
 
@@ -228,13 +243,13 @@ python transfer_main.py --source_model clip-vit-base-patch32 --target_model clip
 - `config.json`：实验配置（包含源模型、目标模型、攻击配置、数据集配置）
 - `transfer_results.csv`：迁移性评估结果（包含各攻击方法的R@1, R@5, R@10, Mean Rank）
 
+<img src="README.assets/image-20251225210701205.png" alt="image-20251225210701205" style="zoom:80%;" /> 
+
 #### 注意事项
 
-1. **分辨率警告**：如果源模型或目标模型包含336px分辨率模型，程序会输出警告。建议使用相同分辨率的模型进行迁移实验。
+1. **模型选择**：源模型用于生成对抗样本（白盒攻击），目标模型用于评估迁移效果（黑盒评估）。
 
-2. **模型选择**：源模型用于生成对抗样本（白盒攻击），目标模型用于评估迁移效果（黑盒评估）。
-
-3. **批次大小**：如果遇到CUDA内存不足，可以减小 `transfer_dataset_config.py` 中的 `batch_size`。
+2. **批次大小**：如果遇到CUDA内存不足，可以减小 `config/transfer_dataset_config.py` 中的 `batch_size`。
 
 ---
 
@@ -256,50 +271,25 @@ Mean Rank表示正确匹配文本在所有候选文本中的平均排名。
 
 ## 常见问题
 
-### 1. CUDA内存不足
+### CUDA内存不足
 
 **问题**：`RuntimeError: CUDA out of memory`
 
 **解决方案**：
-- 减小`batch_size`（在配置文件中）
+- 减小`batch_size`
 - 使用较小的模型（如`clip-vit-base-patch16`）
 - 设置`max_samples`限制数据量
 - 使用CPU模式（将代码中的`device`改为`"cpu"`）
 
-### 2. 数据集路径错误
-
-**问题**：`FileNotFoundError` 或数据集加载为空
-
-**解决方案**：
-- 检查`dataset_root`路径是否正确
-- 确认`results.csv`文件存在且格式正确
-- 检查`test.txt`中的图片ID是否与CSV中的图片名匹配（不含扩展名）
-
-### 3. HuggingFace模型下载失败
+### HuggingFace模型下载失败
 
 **问题**：模型下载超时或失败
 
 **解决方案**：
-- 确认已设置`HF_ENDPOINT`环境变量
+
+- 确认已设置`HF_ENDPOINT`环境变量：[配置HuggingFace镜像](#HF)
 - 手动下载模型到本地，修改代码使用本地路径
 - 检查网络连接
-
-### 4. 图像预处理错误
-
-**问题**：`PIL.Image`相关错误
-
-**解决方案**：
-- 确认图像文件完整且格式正确（JPEG/PNG）
-- 检查图像文件是否损坏
-- 确认Pillow版本正确（`pip install pillow==12.0.0`）
-
-### 5. 实验结果不一致
-
-**问题**：每次运行结果略有差异
-
-**解决方案**：
-- 代码已设置随机种子（`setup_seed(2025)`），确保可复现
-- 如果仍有差异，检查是否有其他随机性来源（如数据加载顺序）
 
 ---
 
